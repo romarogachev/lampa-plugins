@@ -20,8 +20,8 @@
 
         // API
         oauth_url:     'https://api.srvkp.com/oauth2/token',
-        client_id:     'lampa',
-        client_secret: 'lampa',
+        client_id:     'xbmc',
+        client_secret: 'cgg3gtifu46urtfp2zp1nqtba0k2ezxh',
 
         // За сколько секунд до истечения обновлять
         refresh_threshold_sec: 600,
