@@ -1,45 +1,38 @@
 /**
  * ============================================================
  *  Kino.pub Plugin for Lampa (Tizen OS / Samsung TV)
- *  Version: 1.1.0
+ *  Version: 1.2.0
  *
- *  Особенности:
- *  - "Неубиваемая" авторизация через OAuth2 Device Flow
- *  - Автообновление access_token через refresh_token
- *    (срабатывает за 10 минут до истечения)
- *  - Хранение токенов в Lampa.Storage (переживает перезагрузку TV)
- *  - Поиск контента и передача HLS/MP4 во встроенный плеер Lampa
- *  - Совместимо с Lampa 3.x (точка входа через polling)
+ *  Исправлено:
+ *  - Актуальный домен API: api.srvkp.com
+ *  - Актуальный client_secret
+ *  - Правильные пути OAuth: /oauth2/device и /oauth2/token
+ *  - grant_type для polling: device_token
  * ============================================================
  */
 
 (function () {
     'use strict';
 
-    // ============================================================
-    //  КОНФИГУРАЦИЯ
-    //  Если хотите заменить ключи — меняйте только здесь.
-    // ============================================================
     var CONFIG = {
-        // Публичные ключи open-source клиентов Kino.pub (Kodi/AppleTV)
         client_id:     'xbmc',
-        client_secret: 'cgg3gtiwtlqlIDSq',
+        client_secret: 'cgg3gtifu46urtfp2zp1nqtba0k2ezxh',
 
-        // Базовый URL API
-        api_base: 'https://api.service-kp.com/v1',
+        // Актуальные эндпоинты (из исходников kodi.kino.pub)
+        api_base:       'https://api.srvkp.com/v1',
+        oauth_device:   'https://api.srvkp.com/oauth2/device',
+        oauth_token:    'https://api.srvkp.com/oauth2/token',
 
-        // Страница активации устройства (показывается пользователю)
-        activate_url: 'https://kpub.org/device',
+        // Страница активации
+        activate_url: 'https://kino.watch/device',
 
-        // Ключи в Lampa.Storage
         storage: {
             access_token:  'kinopub_access_token',
             refresh_token: 'kinopub_refresh_token',
             expire_time:   'kinopub_expire_time'
         },
 
-        // За сколько секунд до истечения токена делать превентивное обновление
-        refresh_threshold_sec: 600  // 10 минут
+        refresh_threshold_sec: 600
     };
 
     // ============================================================
@@ -101,7 +94,6 @@
             var body = Object.keys(params)
                 .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
                 .join('&');
-
             var xhr = new XMLHttpRequest();
             xhr.open('POST', url, true);
             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
@@ -151,7 +143,7 @@
             var self = this;
 
             Http.post(
-                CONFIG.api_base + '/oauth2/token',
+                CONFIG.oauth_token,
                 {
                     grant_type:    'refresh_token',
                     client_id:     CONFIG.client_id,
@@ -178,7 +170,7 @@
     };
 
     // ============================================================
-    //  API-КЛИЕНТ KINO.PUB
+    //  API-КЛИЕНТ
     // ============================================================
     var KinoPubApi = {
         authGet: function (path, params, onSuccess, onError) {
@@ -202,9 +194,10 @@
             this.authGet('/items/' + id, {}, onSuccess, onError);
         },
 
+        // Шаг 1: получить code и user_code
         requestDeviceCode: function (onSuccess, onError) {
             Http.post(
-                CONFIG.api_base + '/oauth2/device',
+                CONFIG.oauth_device,
                 {
                     grant_type:    'device_code',
                     client_id:     CONFIG.client_id,
@@ -215,11 +208,13 @@
             );
         },
 
+        // Шаг 2: polling — проверяем подтвердил ли пользователь
+        // grant_type = 'device_token' (именно так, не device_code!)
         pollDeviceToken: function (code, onSuccess, onPending, onError) {
             Http.post(
-                CONFIG.api_base + '/oauth2/token',
+                CONFIG.oauth_device,
                 {
-                    grant_type:    'device_code',
+                    grant_type:    'device_token',
                     client_id:     CONFIG.client_id,
                     client_secret: CONFIG.client_secret,
                     code:          code
@@ -229,6 +224,7 @@
                     else { onPending(); }
                 },
                 function (status) {
+                    // 400 = authorization_pending — ждём дальше
                     if (status === 400) { onPending(); }
                     else { onError(status); }
                 }
@@ -251,10 +247,10 @@
         },
 
         _startPolling: function (resp) {
-            var self      = this;
-            var code      = resp.code;
-            var interval  = (resp.interval || 5) * 1000;
-            var deadline  = Date.now() + ((resp.expires_in || 300) * 1000);
+            var self     = this;
+            var code     = resp.code;
+            var interval = (resp.interval || 5) * 1000;
+            var deadline = Date.now() + ((resp.expires_in || 300) * 1000);
 
             var html =
                 '<div style="text-align:center;padding:20px;font-size:16px;line-height:1.8;">' +
@@ -356,7 +352,6 @@
     var KinoPubSearch = {
         playByTitle: function (title) {
             Lampa.Noty.show('Kino.pub: поиск «' + title + '»…');
-
             KinoPubApi.search(title, function (resp) {
                 var items = resp.items || [];
                 if (!items.length) {
@@ -420,7 +415,7 @@
                     name: 'Kino.pub — Авторизация',
                     description: TokenStore.isAuthorized()
                         ? 'Статус: Авторизован ✓'
-                        : 'Нажмите, чтобы войти через kpub.org/device'
+                        : 'Нажмите, чтобы войти через kino.watch/device'
                 },
                 onChange: function () {
                     if (TokenStore.isAuthorized()) {
@@ -485,12 +480,15 @@
     //  ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     function initPlugin() {
-        // Защита от двойного запуска
         if (window._kinopubInited) return;
         window._kinopubInited = true;
 
-        try { Lampa.Component.add('kinopub', { create: function () {}, destroy: function () { AuthScreen._stopPolling(); } }); }
-        catch (e) {}
+        try {
+            Lampa.Component.add('kinopub', {
+                create:  function () {},
+                destroy: function () { AuthScreen._stopPolling(); }
+            });
+        } catch (e) {}
 
         SettingsUI.init();
         EventBridge.init();
@@ -499,7 +497,7 @@
     }
 
     // ============================================================
-    //  ТОЧКА ВХОДА — polling до готовности Lampa (Lampa 3.x)
+    //  ТОЧКА ВХОДА — polling до готовности Lampa 3.x
     // ============================================================
     function tryInit() {
         if (
