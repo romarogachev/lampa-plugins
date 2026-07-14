@@ -1,12 +1,11 @@
 /**
  * ============================================================
  *  Kino.pub Plugin for Lampa (Tizen OS / Samsung TV)
- *  Version: 1.2.0
+ *  Version: 1.3.0
  *
  *  Исправлено:
- *  - Актуальный домен API: api.srvkp.com
- *  - Актуальный client_secret
- *  - Правильные пути OAuth: /oauth2/device и /oauth2/token
+ *  - Авторизация через Lampa.Select вместо trigger-param
+ *  - Актуальный домен: api.srvkp.com
  *  - grant_type для polling: device_token
  * ============================================================
  */
@@ -17,24 +16,429 @@
     var CONFIG = {
         client_id:     'xbmc',
         client_secret: 'cgg3gtifu46urtfp2zp1nqtba0k2ezxh',
-
-        // Актуальные эндпоинты (из исходников kodi.kino.pub)
-        api_base:       'https://api.srvkp.com/v1',
-        oauth_device:   'https://api.srvkp.com/oauth2/device',
-        oauth_token:    'https://api.srvkp.com/oauth2/token',
-
-        // Страница активации
-        activate_url: 'https://kino.watch/device',
-
+        api_base:      'https://api.srvkp.com/v1',
+        oauth_device:  'https://api.srvkp.com/oauth2/device',
+        oauth_token:   'https://api.srvkp.com/oauth2/token',
+        activate_url:  'https://kino.watch/device',
         storage: {
             access_token:  'kinopub_access_token',
             refresh_token: 'kinopub_refresh_token',
             expire_time:   'kinopub_expire_time'
         },
-
         refresh_threshold_sec: 600
     };
 
+    // ============================================================
+    //  ХРАНИЛИЩЕ ТОКЕНОВ
+    // ============================================================
+    var TokenStore = {
+        save: function (data) {
+            Lampa.Storage.set(CONFIG.storage.access_token,  data.access_token);
+            Lampa.Storage.set(CONFIG.storage.refresh_token, data.refresh_token);
+            var expire = Math.floor(Date.now() / 1000) + (data.expires_in || 3600);
+            Lampa.Storage.set(CONFIG.storage.expire_time, expire);
+        },
+        get: function () {
+            return {
+                access_token:  Lampa.Storage.get(CONFIG.storage.access_token,  ''),
+                refresh_token: Lampa.Storage.get(CONFIG.storage.refresh_token, ''),
+                expire_time:   parseInt(Lampa.Storage.get(CONFIG.storage.expire_time, '0'), 10)
+            };
+        },
+        clear: function () {
+            Lampa.Storage.set(CONFIG.storage.access_token,  '');
+            Lampa.Storage.set(CONFIG.storage.refresh_token, '');
+            Lampa.Storage.set(CONFIG.storage.expire_time,   0);
+        },
+        isAuthorized: function () {
+            return !!Lampa.Storage.get(CONFIG.storage.access_token, '');
+        }
+    };
+
+    // ============================================================
+    //  HTTP-УТИЛИТЫ
+    // ============================================================
+    var Http = {
+        get: function (url, headers, onSuccess, onError) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.setRequestHeader('Accept', 'application/json');
+            if (headers) {
+                Object.keys(headers).forEach(function (k) {
+                    xhr.setRequestHeader(k, headers[k]);
+                });
+            }
+            xhr.onload = function () {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try { onSuccess(JSON.parse(xhr.responseText)); }
+                    catch (e) { onError(0, 'JSON parse error'); }
+                } else {
+                    onError(xhr.status, xhr.statusText);
+                }
+            };
+            xhr.onerror = function () { onError(0, 'Network error'); };
+            xhr.send();
+        },
+        post: function (url, params, onSuccess, onError) {
+            var body = Object.keys(params)
+                .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+                .join('&');
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.onload = function () {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try { onSuccess(JSON.parse(xhr.responseText)); }
+                    catch (e) { onError(0, 'JSON parse error'); }
+                } else {
+                    onError(xhr.status, xhr.statusText);
+                }
+            };
+            xhr.onerror = function () { onError(0, 'Network error'); };
+            xhr.send(body);
+        }
+    };
+
+    // ============================================================
+    //  ТОКЕН-МЕНЕДЖЕР
+    // ============================================================
+    var TokenManager = {
+        _refreshing: false,
+        _queue: [],
+        getValidToken: function (onReady, onFail) {
+            var data = TokenStore.get();
+            if (!data.access_token) { onFail('not_authorized'); return; }
+            var nowSec = Math.floor(Date.now() / 1000);
+            if ((data.expire_time - nowSec) >= CONFIG.refresh_threshold_sec) {
+                onReady(data.access_token);
+                return;
+            }
+            if (this._refreshing) {
+                this._queue.push({ ok: onReady, fail: onFail });
+                return;
+            }
+            this._refreshing = true;
+            var self = this;
+            Http.post(CONFIG.oauth_token, {
+                grant_type:    'refresh_token',
+                client_id:     CONFIG.client_id,
+                client_secret: CONFIG.client_secret,
+                refresh_token: data.refresh_token
+            }, function (resp) {
+                TokenStore.save(resp);
+                self._refreshing = false;
+                onReady(resp.access_token);
+                self._queue.forEach(function (cb) { cb.ok(resp.access_token); });
+                self._queue = [];
+            }, function (status, text) {
+                self._refreshing = false;
+                var msg = 'Token refresh failed: ' + status + ' ' + text;
+                onFail(msg);
+                self._queue.forEach(function (cb) { cb.fail(msg); });
+                self._queue = [];
+            });
+        }
+    };
+
+    // ============================================================
+    //  API-КЛИЕНТ
+    // ============================================================
+    var KinoPubApi = {
+        authGet: function (path, params, onSuccess, onError) {
+            TokenManager.getValidToken(function (token) {
+                var query = Object.keys(params || {})
+                    .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+                    .join('&');
+                var url = CONFIG.api_base + path + (query ? '?' + query : '');
+                Http.get(url, { Authorization: 'Bearer ' + token }, onSuccess, onError);
+            }, onError);
+        },
+        search: function (title, onSuccess, onError) {
+            this.authGet('/items', { title: title }, onSuccess, onError);
+        },
+        getItem: function (id, onSuccess, onError) {
+            this.authGet('/items/' + id, {}, onSuccess, onError);
+        },
+        requestDeviceCode: function (onSuccess, onError) {
+            Http.post(CONFIG.oauth_device, {
+                grant_type:    'device_code',
+                client_id:     CONFIG.client_id,
+                client_secret: CONFIG.client_secret
+            }, onSuccess, onError);
+        },
+        pollDeviceToken: function (code, onSuccess, onPending, onError) {
+            Http.post(CONFIG.oauth_device, {
+                grant_type:    'device_token',
+                client_id:     CONFIG.client_id,
+                client_secret: CONFIG.client_secret,
+                code:          code
+            }, function (resp) {
+                if (resp.access_token) { onSuccess(resp); }
+                else { onPending(); }
+            }, function (status) {
+                if (status === 400) { onPending(); }
+                else { onError(status); }
+            });
+        }
+    };
+
+    // ============================================================
+    //  ЭКРАН АВТОРИЗАЦИИ
+    // ============================================================
+    var AuthScreen = {
+        _pollTimer: null,
+
+        show: function () {
+            var self = this;
+            Lampa.Noty.show('Kino.pub: получение кода…');
+            Http.post(CONFIG.oauth_device, {
+                grant_type:    'device_code',
+                client_id:     CONFIG.client_id,
+                client_secret: CONFIG.client_secret
+            }, function (resp) {
+                self._startPolling(resp);
+            }, function (status, text) {
+                Lampa.Noty.show('Kino.pub: ошибка ' + status + ' ' + text);
+            });
+        },
+
+        _startPolling: function (resp) {
+            var self     = this;
+            var code     = resp.code;
+            var userCode = resp.user_code || code;
+            var interval = (resp.interval || 5) * 1000;
+            var deadline = Date.now() + ((resp.expires_in || 300) * 1000);
+
+            var html =
+                '<div style="text-align:center;padding:30px 20px;font-size:16px;line-height:2;">' +
+                    '<p style="margin:0 0 6px;">Откройте в браузере:</p>' +
+                    '<p style="font-size:22px;font-weight:bold;color:#e5c100;margin:0 0 16px;">' + CONFIG.activate_url + '</p>' +
+                    '<p style="margin:0 0 6px;">Введите код:</p>' +
+                    '<p style="font-size:56px;font-weight:bold;letter-spacing:12px;color:#ffffff;margin:0 0 24px;">' + userCode + '</p>' +
+                    '<p id="kinopub-status" style="color:#aaaaaa;font-size:14px;margin:0;">Ожидание подтверждения…</p>' +
+                '</div>';
+
+            Lampa.Modal.open({
+                title:  'Авторизация Kino.pub',
+                html:   html,
+                onBack: function () {
+                    self._stopPolling();
+                    Lampa.Modal.close();
+                }
+            });
+
+            self._pollTimer = setInterval(function () {
+                if (Date.now() > deadline) {
+                    self._stopPolling();
+                    AuthScreen._setStatus('Код истёк. Закройте и попробуйте снова.');
+                    return;
+                }
+                Http.post(CONFIG.oauth_device, {
+                    grant_type:    'device_token',
+                    client_id:     CONFIG.client_id,
+                    client_secret: CONFIG.client_secret,
+                    code:          code
+                }, function (r) {
+                    if (r.access_token) {
+                        self._stopPolling();
+                        TokenStore.save(r);
+                        AuthScreen._setStatus('✓ Авторизован!');
+                        setTimeout(function () { Lampa.Modal.close(); }, 1500);
+                        Lampa.Noty.show('Kino.pub: успешная авторизация');
+                    }
+                }, function (status) {
+                    // 400 = pending, остальное — ошибка
+                    if (status !== 400) {
+                        self._stopPolling();
+                        AuthScreen._setStatus('Ошибка ' + status + '. Попробуйте снова.');
+                    }
+                });
+            }, interval);
+        },
+
+        _stopPolling: function () {
+            if (this._pollTimer) {
+                clearInterval(this._pollTimer);
+                this._pollTimer = null;
+            }
+        },
+
+        _setStatus: function (text) {
+            var el = document.getElementById('kinopub-status');
+            if (el) { el.textContent = text; }
+        }
+    };
+
+    // ============================================================
+    //  МЕДИА-ХЕЛПЕР
+    // ============================================================
+    var MediaHelper = {
+        buildSources: function (item) {
+            var sources = [];
+            var videos  = (item && item.videos) ? item.videos : [];
+            videos.forEach(function (video) {
+                (video.files || []).forEach(function (f) {
+                    if (!f.url) return;
+                    sources.push({
+                        url:     f.url,
+                        quality: f.quality || 'auto',
+                        type:    f.url.indexOf('.m3u8') !== -1 ? 'hls' : 'mp4'
+                    });
+                });
+            });
+            sources.sort(function (a, b) {
+                return parseInt(b.quality, 10) - parseInt(a.quality, 10);
+            });
+            return sources;
+        },
+        buildAudioTracks: function (item) {
+            var tracks = [];
+            var videos = (item && item.videos) ? item.videos : [];
+            if (!videos.length) return tracks;
+            (videos[0].audios || []).forEach(function (a) {
+                tracks.push({ id: a.id, title: a.title || ('Track ' + a.id) });
+            });
+            return tracks;
+        }
+    };
+
+    // ============================================================
+    //  ПОИСК И ВОСПРОИЗВЕДЕНИЕ
+    // ============================================================
+    var KinoPubSearch = {
+        playByTitle: function (title) {
+            Lampa.Noty.show('Kino.pub: поиск «' + title + '»…');
+            KinoPubApi.search(title, function (resp) {
+                var items = resp.items || [];
+                if (!items.length) { Lampa.Noty.show('Kino.pub: ничего не найдено'); return; }
+                KinoPubSearch._loadAndPlay(items[0].id, items[0].title || title);
+            }, function () {
+                Lampa.Noty.show('Kino.pub: ошибка поиска');
+            });
+        },
+        _loadAndPlay: function (id, title) {
+            KinoPubApi.getItem(id, function (resp) {
+                var item    = resp.item || {};
+                var sources = MediaHelper.buildSources(item);
+                var audios  = MediaHelper.buildAudioTracks(item);
+                if (!sources.length) { Lampa.Noty.show('Kino.pub: медиафайлы не найдены'); return; }
+                Lampa.Player.play({
+                    title:   title,
+                    url:     sources[0].url,
+                    quality: KinoPubSearch._buildQualityMap(sources),
+                    audios:  audios
+                });
+                Lampa.Player.playlist(sources.map(function (s) {
+                    return { title: s.quality, url: s.url, type: s.type };
+                }));
+            }, function () {
+                Lampa.Noty.show('Kino.pub: ошибка загрузки медиа');
+            });
+        },
+        _buildQualityMap: function (sources) {
+            var map = {};
+            sources.forEach(function (s) { map[s.quality] = s.url; });
+            return map;
+        }
+    };
+
+    // ============================================================
+    //  UI В НАСТРОЙКАХ LAMPA
+    //  Используем select вместо trigger — работает надёжно
+    // ============================================================
+    var SettingsUI = {
+        init: function () {
+            // Компонент-раздел
+            Lampa.SettingsApi.addComponent({
+                component: 'kinopub',
+                name:      'Kino.pub',
+                icon:      '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'
+            });
+
+            // Пункт "Войти / Выйти" — тип select, всегда показывает меню
+            Lampa.SettingsApi.addParam({
+                component: 'kinopub',
+                param: {
+                    name:    'kinopub_action',
+                    type:    'select',
+                    values:  TokenStore.isAuthorized()
+                        ? { reauth: 'Переавторизоваться', logout: 'Выйти' }
+                        : { login: 'Войти через kino.watch/device' },
+                    default: TokenStore.isAuthorized() ? 'reauth' : 'login'
+                },
+                field: {
+                    name:        'Авторизация',
+                    description: TokenStore.isAuthorized()
+                        ? 'Статус: Авторизован ✓'
+                        : 'Не авторизован'
+                },
+                onChange: function (val) {
+                    if (val === 'login' || val === 'reauth') {
+                        AuthScreen.show();
+                    } else if (val === 'logout') {
+                        TokenStore.clear();
+                        Lampa.Noty.show('Kino.pub: выход выполнен');
+                    }
+                }
+            });
+        }
+    };
+
+    // ============================================================
+    //  ПЕРЕХВАТ СОБЫТИЙ LAMPA
+    // ============================================================
+    var EventBridge = {
+        init: function () {
+            Lampa.Listener.follow('player:before_start', function (e) {
+                if (e && e.source) return;
+                if (e && e.card && e.card.title) {
+                    e.preventDefault && e.preventDefault();
+                    KinoPubSearch.playByTitle(e.card.title);
+                }
+            });
+            Lampa.Listener.follow('search:results', function (e) {
+                if (!TokenStore.isAuthorized()) return;
+                var query = e && e.query;
+                if (!query) return;
+                if (e.addSource) {
+                    e.addSource({ name: 'Kino.pub', action: function () { KinoPubSearch.playByTitle(query); } });
+                }
+            });
+        }
+    };
+
+    // ============================================================
+    //  ИНИЦИАЛИЗАЦИЯ
+    // ============================================================
+    function initPlugin() {
+        if (window._kinopubInited) return;
+        window._kinopubInited = true;
+        try {
+            Lampa.Component.add('kinopub', {
+                create:  function () {},
+                destroy: function () { AuthScreen._stopPolling(); }
+            });
+        } catch (e) {}
+        SettingsUI.init();
+        EventBridge.init();
+        console.log('[Kino.pub] Плагин инициализирован. Авторизован:', TokenStore.isAuthorized());
+    }
+
+    // ============================================================
+    //  ТОЧКА ВХОДА
+    // ============================================================
+    function tryInit() {
+        if (window.Lampa && Lampa.Storage && Lampa.Listener && Lampa.SettingsApi && Lampa.Noty) {
+            initPlugin();
+        } else {
+            setTimeout(tryInit, 200);
+        }
+    }
+
+    tryInit();
+
+})();
     // ============================================================
     //  ХРАНИЛИЩЕ ТОКЕНОВ
     // ============================================================
