@@ -1,16 +1,10 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 1.0.0
+ *  Version: 1.1.0
  *
- *  Назначение:
- *  Следит за токеном KinoPub который хранит online_mod
- *  в ключе 'online_kinopub_token' и автоматически обновляет
- *  его через refresh_token до истечения.
- *
- *  Установить ВМЕСТЕ с online_mod (http://lampa.stream/modss).
- *  Отдельная авторизация не нужна — авторизуйтесь через
- *  online_mod (Настройки → Modss → Online → KinoPub).
+ *  Следит за токенами online_mod (ключи: pub_access_token,
+ *  pub_refresh_token) и автоматически обновляет их до истечения.
  * ============================================================
  */
 
@@ -18,60 +12,72 @@
     'use strict';
 
     var CONFIG = {
-        // Ключи online_mod в Lampa.Storage
-        storage_key:  'online_kinopub_token',
-        api_key:      'online_kinopub_api',
+        // Реальные ключи которые использует online_mod
+        key_access:  'pub_access_token',
+        key_refresh: 'pub_refresh_token',
+        key_expire:  'pub_expire_time',   // наш ключ для хранения времени истечения
+        key_logined: 'logined_pub',
 
-        // Дефолтный API (online_mod может переопределить через storage)
-        api_default:  'https://api.srvkp.com/',
-
-        // Credentials online_mod
+        // API
+        oauth_url:     'https://api.srvkp.com/oauth2/token',
         client_id:     'lampa',
         client_secret: 'lampa',
 
-        // За сколько секунд до истечения делать превентивное обновление
-        refresh_threshold_sec: 600, // 10 минут
+        // За сколько секунд до истечения обновлять
+        refresh_threshold_sec: 600,
 
-        // Как часто проверять токен в фоне (мс)
-        check_interval_ms: 60000 // каждую минуту
+        // Как часто проверять (мс)
+        check_interval_ms: 60000
     };
 
     // ============================================================
-    //  РАБОТА С ТОКЕНОМ ONLINE_MOD
+    //  ХРАНИЛИЩЕ
     // ============================================================
     var TokenStore = {
-        get: function () {
-            var raw = Lampa.Storage.get(CONFIG.storage_key, '');
-            if (!raw) return null;
-            try {
-                return typeof raw === 'object' ? raw : JSON.parse(raw);
-            } catch (e) { return null; }
-        },
-
-        save: function (data) {
-            data.time = Math.floor(Date.now() / 1000);
-            Lampa.Storage.set(CONFIG.storage_key, data);
-        },
-
-        clear: function () {
-            Lampa.Storage.set(CONFIG.storage_key, '');
-        },
-
         isAuthorized: function () {
-            var t = this.get();
-            return !!(t && t.access_token);
+            return localStorage.getItem(CONFIG.key_logined) === 'true' &&
+                   !!localStorage.getItem(CONFIG.key_access);
         },
 
-        // Сколько секунд осталось до истечения токена
+        getAccess: function () {
+            return localStorage.getItem(CONFIG.key_access) || '';
+        },
+
+        getRefresh: function () {
+            return localStorage.getItem(CONFIG.key_refresh) || '';
+        },
+
+        getExpireTime: function () {
+            return parseInt(localStorage.getItem(CONFIG.key_expire) || '0', 10);
+        },
+
+        saveTokens: function (access, refresh, expiresIn) {
+            localStorage.setItem(CONFIG.key_access,  access);
+            localStorage.setItem(CONFIG.key_refresh, refresh);
+            var expireAt = Math.floor(Date.now() / 1000) + (expiresIn || 86400);
+            localStorage.setItem(CONFIG.key_expire, expireAt);
+            // Также обновим в Lampa.Storage чтобы online_mod видел
+            Lampa.Storage.set(CONFIG.key_access,  access);
+            Lampa.Storage.set(CONFIG.key_refresh, refresh);
+        },
+
         secondsLeft: function () {
-            var t = this.get();
-            if (!t || !t.time || !t.expires_in) return 0;
-            var expireAt = t.time + t.expires_in;
+            var expireAt = this.getExpireTime();
+            if (!expireAt) return 9999; // не знаем — считаем что ок
             return expireAt - Math.floor(Date.now() / 1000);
         },
 
         needsRefresh: function () {
             return this.secondsLeft() < CONFIG.refresh_threshold_sec;
+        },
+
+        // Инициализация: если expire_time ещё не установлен — ставим +24ч
+        initExpireIfMissing: function () {
+            if (!localStorage.getItem(CONFIG.key_expire) && this.isAuthorized()) {
+                var expireAt = Math.floor(Date.now() / 1000) + 86400;
+                localStorage.setItem(CONFIG.key_expire, expireAt);
+                console.log('[KP Keeper] Установлено время истечения токена (+24ч)');
+            }
         }
     };
 
@@ -101,116 +107,98 @@
     };
 
     // ============================================================
-    //  ЛОГИКА ОБНОВЛЕНИЯ ТОКЕНА
+    //  ОБНОВЛЕНИЕ ТОКЕНА
     // ============================================================
     var TokenRefresher = {
         _refreshing: false,
 
-        getApiUrl: function () {
-            return Lampa.Storage.get(CONFIG.api_key, CONFIG.api_default);
-        },
-
-        // Обновить токен через refresh_token
         refresh: function (onSuccess, onFail) {
             if (this._refreshing) return;
 
-            var tokenData = TokenStore.get();
-            if (!tokenData || !tokenData.refresh_token) {
+            var refreshToken = TokenStore.getRefresh();
+            if (!refreshToken) {
+                console.log('[KP Keeper] Нет refresh_token');
                 onFail && onFail('no_refresh_token');
                 return;
             }
 
             this._refreshing = true;
             var self = this;
-            var apiUrl = this.getApiUrl();
-
             console.log('[KP Keeper] Обновляем токен...');
 
             Http.post(
-                apiUrl + 'oauth2/token',
+                CONFIG.oauth_url,
                 {
                     grant_type:    'refresh_token',
                     client_id:     CONFIG.client_id,
                     client_secret: CONFIG.client_secret,
-                    refresh_token: tokenData.refresh_token
+                    refresh_token: refreshToken
                 },
                 function (resp) {
                     self._refreshing = false;
                     if (resp.access_token) {
-                        TokenStore.save(resp);
-                        console.log('[KP Keeper] Токен успешно обновлён. Истекает через', resp.expires_in, 'сек');
+                        TokenStore.saveTokens(
+                            resp.access_token,
+                            resp.refresh_token || refreshToken,
+                            resp.expires_in
+                        );
+                        console.log('[KP Keeper] Токен обновлён! Истекает через', resp.expires_in, 'сек');
                         onSuccess && onSuccess(resp);
                     } else {
-                        console.log('[KP Keeper] Ответ без access_token:', JSON.stringify(resp));
-                        onFail && onFail('no_access_token');
+                        console.log('[KP Keeper] Ответ без access_token');
+                        onFail && onFail('empty_response');
                     }
                 },
                 function (status, text) {
                     self._refreshing = false;
-                    console.log('[KP Keeper] Ошибка обновления токена:', status, text);
+                    console.log('[KP Keeper] Ошибка обновления:', status, text);
                     if (status === 401 || status === 400) {
-                        // refresh_token протух — нужна переавторизация
-                        TokenStore.clear();
-                        Lampa.Noty.show('Kino.pub: сессия истекла, войдите через Modss → Online → KinoPub');
+                        Lampa.Noty.show('Kino.pub: сессия истекла — войдите снова через Modss → Online → KinoPub');
                     }
                     onFail && onFail(status);
                 }
             );
         },
 
-        // Проверить и при необходимости обновить
         checkAndRefresh: function () {
             if (!TokenStore.isAuthorized()) {
-                console.log('[KP Keeper] Токен не найден — авторизация не выполнена');
+                console.log('[KP Keeper] Не авторизован, пропускаем');
                 return;
             }
 
             var left = TokenStore.secondsLeft();
-            console.log('[KP Keeper] Проверка токена. Осталось секунд:', left);
+            console.log('[KP Keeper] Проверка. Осталось секунд:', left);
 
             if (TokenStore.needsRefresh()) {
-                console.log('[KP Keeper] Токен истекает, запускаем обновление...');
+                console.log('[KP Keeper] Пора обновить токен');
                 this.refresh(
-                    function () { console.log('[KP Keeper] Фоновое обновление успешно'); },
-                    function (err) { console.log('[KP Keeper] Фоновое обновление не удалось:', err); }
+                    function () { console.log('[KP Keeper] Фоновое обновление OK'); },
+                    function (e) { console.log('[KP Keeper] Фоновое обновление FAIL:', e); }
                 );
             }
         }
     };
 
     // ============================================================
-    //  ФОНОВЫЙ WATCHDOG
-    //  Проверяет токен каждую минуту
+    //  WATCHDOG
     // ============================================================
     var Watchdog = {
         _timer: null,
 
         start: function () {
             if (this._timer) return;
-            // Первая проверка через 5 секунд после старта
             setTimeout(function () {
                 TokenRefresher.checkAndRefresh();
             }, 5000);
-
-            // Затем каждую минуту
             this._timer = setInterval(function () {
                 TokenRefresher.checkAndRefresh();
             }, CONFIG.check_interval_ms);
-
             console.log('[KP Keeper] Watchdog запущен');
-        },
-
-        stop: function () {
-            if (this._timer) {
-                clearInterval(this._timer);
-                this._timer = null;
-            }
         }
     };
 
     // ============================================================
-    //  UI В НАСТРОЙКАХ
-    //  Показывает статус токена и время до истечения
+    //  UI
     // ============================================================
     var SettingsUI = {
         init: function () {
@@ -228,39 +216,31 @@
                     default: false
                 },
                 field: {
-                    name:        'Статус токена',
-                    description: SettingsUI._getStatus()
+                    name:        'Статус',
+                    description: TokenStore.isAuthorized()
+                        ? 'Авторизован ✓ — нажмите для обновления токена'
+                        : 'Не авторизован — войдите через Modss → Online → KinoPub'
                 },
                 onChange: function () {
                     Lampa.Storage.set('kinopub_keeper_status', false);
-                    // Показываем детальный статус
-                    var t = TokenStore.get();
-                    if (!t) {
-                        Lampa.Noty.show('Kino.pub: токен не найден. Авторизуйтесь через Modss → Online → KinoPub');
+
+                    if (!TokenStore.isAuthorized()) {
+                        Lampa.Noty.show('Kino.pub: не авторизован. Войдите через Modss → Online → KinoPub');
                         return;
                     }
+
                     var left = TokenStore.secondsLeft();
                     var hours = Math.floor(left / 3600);
                     var mins  = Math.floor((left % 3600) / 60);
-                    Lampa.Noty.show('Kino.pub: токен активен, истекает через ' + hours + 'ч ' + mins + 'мин');
 
-                    // Принудительное обновление
-                    if (TokenStore.needsRefresh()) {
-                        TokenRefresher.refresh(
-                            function () { Lampa.Noty.show('Kino.pub: токен обновлён'); },
-                            function () { Lampa.Noty.show('Kino.pub: не удалось обновить токен'); }
-                        );
-                    }
+                    Lampa.Noty.show('Kino.pub: токен активен, ~' + hours + 'ч ' + mins + 'мин до истечения');
+
+                    TokenRefresher.refresh(
+                        function () { Lampa.Noty.show('Kino.pub: токен успешно обновлён'); },
+                        function () { Lampa.Noty.show('Kino.pub: не удалось обновить токен'); }
+                    );
                 }
             });
-        },
-
-        _getStatus: function () {
-            if (!TokenStore.isAuthorized()) return 'Не авторизован — войдите через Modss';
-            var left = TokenStore.secondsLeft();
-            if (left <= 0) return 'Токен истёк';
-            var hours = Math.floor(left / 3600);
-            return 'Авторизован ✓ (токен истекает через ~' + hours + 'ч)';
         }
     };
 
@@ -271,11 +251,13 @@
         if (window._kinopubKeeperInited) return;
         window._kinopubKeeperInited = true;
 
+        TokenStore.initExpireIfMissing();
         SettingsUI.init();
         Watchdog.start();
 
-        console.log('[KP Keeper] Инициализирован. Токен есть:', TokenStore.isAuthorized());
+        console.log('[KP Keeper] Инициализирован. Авторизован:', TokenStore.isAuthorized());
         if (TokenStore.isAuthorized()) {
+            console.log('[KP Keeper] access_token:', TokenStore.getAccess().substring(0, 20) + '...');
             console.log('[KP Keeper] Секунд до истечения:', TokenStore.secondsLeft());
         }
     }
