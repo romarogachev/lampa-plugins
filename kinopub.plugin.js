@@ -1,7 +1,12 @@
 /**
  * ============================================================
  *  Kino.pub Plugin for Lampa (Tizen OS / Samsung TV)
- *  Version: 1.4.0
+ *  Version: 1.5.0
+ *
+ *  Исправлено:
+ *  - Lampa.Modal принимает jQuery-объект, не строку
+ *  - Актуальные эндпоинты api.srvkp.com
+ *  - grant_type=device_token для polling
  * ============================================================
  */
 
@@ -14,7 +19,7 @@
         api_base:      'https://api.srvkp.com/v1',
         oauth_device:  'https://api.srvkp.com/oauth2/device',
         oauth_token:   'https://api.srvkp.com/oauth2/token',
-        activate_url:  'https://kino.watch/device',
+        activate_url:  'kino.watch/device',
         storage: {
             access_token:  'kinopub_access_token',
             refresh_token: 'kinopub_refresh_token',
@@ -168,18 +173,18 @@
             var interval = (resp.interval || 5) * 1000;
             var deadline = Date.now() + ((resp.expires_in || 300) * 1000);
 
-            var html =
-                '<div style="text-align:center;padding:30px 20px;line-height:2;">' +
-                    '<p style="margin:0 0 6px;font-size:16px;">Откройте в браузере:</p>' +
-                    '<p style="font-size:20px;font-weight:bold;color:#e5c100;margin:0 0 16px;">' + CONFIG.activate_url + '</p>' +
-                    '<p style="margin:0 0 6px;font-size:16px;">Введите код:</p>' +
-                    '<p style="font-size:56px;font-weight:bold;letter-spacing:12px;color:#fff;margin:0 0 24px;">' + userCode + '</p>' +
+            // jQuery-объект — именно так ожидает Lampa.Modal
+            var el = $(
+                '<div style="text-align:center;padding:30px;">' +
+                    '<p style="color:#e5c100;font-size:20px;margin:0 0 16px;">' + CONFIG.activate_url + '</p>' +
+                    '<p style="font-size:52px;font-weight:bold;letter-spacing:12px;color:#fff;margin:0 0 20px;">' + userCode + '</p>' +
                     '<p id="kinopub-status" style="color:#aaa;font-size:14px;margin:0;">Ожидание подтверждения…</p>' +
-                '</div>';
+                '</div>'
+            );
 
             Lampa.Modal.open({
                 title:  'Авторизация Kino.pub',
-                html:   html,
+                html:   el,
                 onBack: function () {
                     self._stopPolling();
                     Lampa.Modal.close();
@@ -210,7 +215,6 @@
                         self._stopPolling();
                         AuthScreen._setStatus('Ошибка ' + status + '. Попробуйте снова.');
                     }
-                    // 400 = pending, просто ждём
                 });
             }, interval);
         },
@@ -308,9 +312,7 @@
                     description: TokenStore.isAuthorized() ? 'Статус: Авторизован ✓' : 'Нажмите для входа'
                 },
                 onChange: function () {
-                    // Сбрасываем значение обратно — нам не нужен toggle, только клик
                     Lampa.Storage.set('kinopub_auth', false);
-
                     if (TokenStore.isAuthorized()) {
                         Lampa.Select.show({
                             title: 'Kino.pub',
@@ -357,7 +359,10 @@
         if (window._kinopubInited) return;
         window._kinopubInited = true;
         try {
-            Lampa.Component.add('kinopub', { create: function () {}, destroy: function () { AuthScreen._stopPolling(); } });
+            Lampa.Component.add('kinopub', {
+                create:  function () {},
+                destroy: function () { AuthScreen._stopPolling(); }
+            });
         } catch (e) {}
         SettingsUI.init();
         EventBridge.init();
