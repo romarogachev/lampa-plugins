@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.6.0 (DOM лог + скрытие рекламных элементов)
+ *  Version: 2.7.0 (лёгкий observer, без тормозов)
  * ============================================================
  */
 
@@ -354,54 +354,27 @@
     // ============================================================
     //  ИНИЦИАЛИЗАЦИЯ
     // ============================================================
-    // Скрываем рекламный UI через MutationObserver
+    // Лёгкое скрытие рекламного UI — только точечные элементы
     function hideAdUI() {
-        var adLog = [];
-        var adLogEl = document.getElementById('kp-ad-log');
-
-        function showAdLog() {
-            if (!adLogEl) {
-                adLogEl = document.createElement('div');
-                adLogEl.id = 'kp-ad-log';
-                adLogEl.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font-size:12px;padding:8px;max-width:800px;border-radius:6px;pointer-events:none;';
-                document.body.appendChild(adLogEl);
-            }
-            adLogEl.innerHTML = '<b>[KP] DOM лог:</b><br>' + adLog.slice(-8).join('<br>');
-        }
-
         var observer = new MutationObserver(function(mutations) {
             mutations.forEach(function(m) {
                 m.addedNodes.forEach(function(node) {
                     if (node.nodeType !== 1) return;
-                    var cls  = node.className  || '';
-                    var id   = node.id || '';
-                    var text = node.innerText   || '';
-
-                    // Логируем все новые элементы у которых есть класс
-                    if (cls && cls.length > 2) {
-                        adLog.push('NEW: .' + cls.split(' ')[0] + (id ? ' #' + id : '') + ' | ' + text.substring(0, 20));
-                        showAdLog();
-                    }
-
-                    // Скрываем известные рекламные элементы
+                    var cls = typeof node.className === 'string' ? node.className : '';
+                    var id  = node.id || '';
                     if (
-                        text.trim() === 'Реклама' ||
                         cls.indexOf('preroll') !== -1 ||
-                        cls.indexOf('ad-') !== -1 ||
-                        cls.indexOf('_ad') !== -1 ||
-                        id.indexOf('preroll') !== -1 ||
-                        id.indexOf('ad-') !== -1
+                        id.indexOf('preroll') !== -1
                     ) {
                         node.style.display = 'none';
-                        adLog.push('HIDDEN: .' + cls + ' #' + id);
-                        showAdLog();
-                        console.log('[KP AD] Скрыт:', cls, id, text.substring(0, 30));
+                        console.log('[KP AD] Скрыт preroll элемент:', cls, id);
                     }
                 });
             });
         });
-        observer.observe(document.body, { childList: true, subtree: true });
-        console.log('[KP Keeper] MutationObserver запущен');
+        // Наблюдаем только за прямыми потомками body — не subtree
+        observer.observe(document.body, { childList: true, subtree: false });
+        console.log('[KP Keeper] Лёгкий observer запущен');
     }
 
     function initPlugin() {
