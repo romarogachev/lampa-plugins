@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.3.1 (+ HTTP/XHR перехват для поиска рекламных запросов)
+ *  Version: 2.4.0 (блокировка Яндекс AdFox + BetweenDigital)
  * ============================================================
  */
 
@@ -79,29 +79,42 @@
         window.WebSocket.prototype = OrigWS.prototype;
         console.log('[KP Keeper] WebSocket лог установлен');
 
-        // Перехватываем fetch для поиска рекламных запросов
+        // Блокируем рекламные домены через fetch и XHR
+        var AD_BLOCK = ['yandex.ru/ads', 'adfox', 'betweendigital.com', 'ads.between'];
+
         var origFetch = window.fetch;
         window.fetch = function(url) {
             var u = typeof url === 'string' ? url : (url && url.url) || '';
-            var domain = '';
-            try { domain = new URL(u).hostname; } catch(e) { domain = u.substring(0, 40); }
-            if (u.indexOf('ad') !== -1 || u.indexOf('vast') !== -1 || u.indexOf('preroll') !== -1 || u.indexOf('banner') !== -1) {
-                wsLog.push('🎯 FETCH: ' + domain);
+            var isAd = AD_BLOCK.some(function(d) { return u.indexOf(d) !== -1; });
+            if (isAd) {
+                wsLog.push('🚫 ЗАБЛОКИРОВАНО: ' + u.substring(0, 55));
                 setTimeout(showWsLog, 100);
-                console.log('[KP AD] fetch:', u);
+                console.log('[KP AD] Заблокирован fetch:', u);
+                return Promise.resolve(new Response('{}', { status: 200 }));
             }
             return origFetch.apply(this, arguments);
         };
 
-        // Перехватываем XHR
         var origXHROpen = XMLHttpRequest.prototype.open;
+        var origXHRSend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.open = function(method, url) {
-            if (url && (url.indexOf('ad') !== -1 || url.indexOf('vast') !== -1 || url.indexOf('preroll') !== -1 || url.indexOf('banner') !== -1)) {
-                wsLog.push('🎯 XHR: ' + url.substring(0, 60));
-                setTimeout(showWsLog, 100);
-                console.log('[KP AD] XHR:', url);
-            }
+            this._adUrl = url || '';
             return origXHROpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function(body) {
+            var url = this._adUrl || '';
+            var isAd = AD_BLOCK.some(function(d) { return url.indexOf(d) !== -1; });
+            if (isAd) {
+                wsLog.push('🚫 XHR заблокирован: ' + url.substring(0, 55));
+                setTimeout(showWsLog, 100);
+                console.log('[KP AD] Заблокирован XHR:', url);
+                var self = this;
+                setTimeout(function() {
+                    if (typeof self.onload === 'function') self.onload();
+                }, 10);
+                return;
+            }
+            return origXHRSend.apply(this, arguments);
         };
 
         // Восстановление токенов
