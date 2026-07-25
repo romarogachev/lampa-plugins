@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.4.1 (мгновенный ответ для рекламных XHR)
+ *  Version: 2.5.0 (скрытие рекламного UI)
  * ============================================================
  */
 
@@ -335,6 +335,27 @@
     // ============================================================
     //  ИНИЦИАЛИЗАЦИЯ
     // ============================================================
+    // Скрываем рекламный UI через MutationObserver
+    function hideAdUI() {
+        var observer = new MutationObserver(function() {
+            document.querySelectorAll('*').forEach(function(el) {
+                var text = el.innerText || '';
+                var cls  = el.className  || '';
+                if (
+                    (text.trim() === 'Реклама' && el.children.length === 0) ||
+                    cls.indexOf('preroll') !== -1 ||
+                    cls.indexOf('ad-player') !== -1 ||
+                    cls.indexOf('ad_player') !== -1
+                ) {
+                    el.style.display = 'none';
+                    console.log('[KP AD] Скрыт рекламный элемент:', cls || text);
+                }
+            });
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        console.log('[KP Keeper] MutationObserver для рекламы запущен');
+    }
+
     function initPlugin() {
         if (window._kinopubKeeperInited) return;
         window._kinopubKeeperInited = true;
@@ -344,7 +365,8 @@
         }
         SettingsUI.init();
         Watchdog.start();
-        console.log('[KP Keeper] v2.3.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
+        hideAdUI();
+        console.log('[KP Keeper] v2.5.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
     }
 
     function tryInit() {
