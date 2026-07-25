@@ -1,6 +1,6 @@
 /**
  * Kino.pub Token Keeper + Ad Blocker
- * Version: 2.5.7
+ * Version: 2.5.8-diag
  */
 
 (function () {
@@ -360,6 +360,9 @@
                 var extra = '';
                 if (name === 'state:changed' && data) {
                     try { extra = ' > ' + JSON.stringify(data).substring(0, 40); } catch (e) {}
+                }
+                if (name === 'request_before' && data && data.url) {
+                    extra = ' > ' + String(data.url).substring(0, 50);
                 }
                 evLog.push((Date.now() % 100000) + ': ' + name + extra);
                 setTimeout(showEvLog, 50);
