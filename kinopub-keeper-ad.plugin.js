@@ -1,56 +1,70 @@
 /**
- * ============================================================
- *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.5.1-diag (детальный лог)
- * ============================================================
+ * Kino.pub Token Keeper + Ad Blocker
+ * Version: 2.5.2
  */
 
 (function () {
     'use strict';
 
     var CONFIG = {
-        key_access:  'pub_access_token',
-        key_refresh: 'pub_refresh_token',
-        key_expire:  'pub_expire_time',
-        key_logined: 'logined_pub',
+        key_access:     'pub_access_token',
+        key_refresh:    'pub_refresh_token',
+        key_expire:     'pub_expire_time',
+        key_logined:    'logined_pub',
         backup_access:  'kp_backup_access',
         backup_refresh: 'kp_backup_refresh',
         backup_expire:  'kp_backup_expire',
-        oauth_url:     'https://api.srvkp.com/oauth2/token',
-        client_id:     'xbmc',
-        client_secret: 'cgg3gtifu46urtfp2zp1nqtba0k2ezxh',
+        oauth_url:      'https://api.srvkp.com/oauth2/token',
+        client_id:      'xbmc',
+        client_secret:  'cgg3gtifu46urtfp2zp1nqtba0k2ezxh',
         refresh_threshold_sec: 600,
         check_interval_ms:     60000
     };
 
     // ============================================================
-    //  НЕМЕДЛЕННОЕ ВЫПОЛНЕНИЕ
+    //  БЛОКИРОВКА РЕКЛАМЫ — выполняется сразу
     // ============================================================
-    (function immediateRestore() {
+    (function blockAds() {
 
-        // 1. Modss VIP флаг
+        // Modss VIP
         localStorage.setItem('showModssVip', 'true');
 
-        // 2. Блокируем рекламные WebSocket
+        // WebSocket блокировка
         var AD_WS = ['kurwa-bober.ninja', 'nackhui.com'];
         var OrigWS = window.WebSocket;
-        window.WebSocket = function(url, protocols) {
-            var blocked = AD_WS.some(function(d) { return url.indexOf(d) !== -1; });
-            if (blocked) {
-                return { send:function(){}, close:function(){}, addEventListener:function(){}, removeEventListener:function(){}, readyState:3 };
+        window.WebSocket = function (url, protocols) {
+            var blocked = false;
+            for (var i = 0; i < AD_WS.length; i++) {
+                if (url.indexOf(AD_WS[i]) !== -1) { blocked = true; break; }
             }
-            return protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+            if (blocked) {
+                return {
+                    send: function () {},
+                    close: function () {},
+                    addEventListener: function () {},
+                    removeEventListener: function () {},
+                    readyState: 3
+                };
+            }
+            if (protocols) { return new OrigWS(url, protocols); }
+            return new OrigWS(url);
         };
         window.WebSocket.prototype = OrigWS.prototype;
 
-        // 3. Блокируем рекламные HTTP запросы
+        // HTTP блокировка
         var AD_HTTP = ['yandex.ru/ads/adfox', 'ads.betweendigital.com'];
 
+        function isAdUrl(url) {
+            for (var i = 0; i < AD_HTTP.length; i++) {
+                if (url.indexOf(AD_HTTP[i]) !== -1) { return true; }
+            }
+            return false;
+        }
+
         var origFetch = window.fetch;
-        window.fetch = function(url) {
-            var u = typeof url === 'string' ? url : (url && url.url) || '';
-            var blocked = AD_HTTP.some(function(d) { return u.indexOf(d) !== -1; });
-            if (blocked) {
+        window.fetch = function (url) {
+            var u = typeof url === 'string' ? url : '';
+            if (isAdUrl(u)) {
                 return Promise.resolve(new Response('{}', { status: 200 }));
             }
             return origFetch.apply(this, arguments);
@@ -59,36 +73,35 @@
         var origOpen = XMLHttpRequest.prototype.open;
         var origSend = XMLHttpRequest.prototype.send;
 
-        XMLHttpRequest.prototype.open = function(method, url) {
+        XMLHttpRequest.prototype.open = function (method, url) {
             this._kpUrl = url || '';
             return origOpen.apply(this, arguments);
         };
 
-        XMLHttpRequest.prototype.send = function(body) {
-            var url = this._kpUrl || '';
-            var blocked = AD_HTTP.some(function(d) { return url.indexOf(d) !== -1; });
-            if (blocked) {
+        XMLHttpRequest.prototype.send = function (body) {
+            if (isAdUrl(this._kpUrl || '')) {
                 var self = this;
-                try { Object.defineProperty(self, 'readyState',   { get: function(){ return 4; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'status',       { get: function(){ return 200; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'responseText', { get: function(){ return '{}'; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'response',     { get: function(){ return '{}'; }, configurable: true }); } catch(e) {}
-                setTimeout(function() {
-                    try { if (typeof self.onreadystatechange === 'function') self.onreadystatechange(); } catch(e) {}
-                    try { if (typeof self.onload === 'function') self.onload(); } catch(e) {}
-                    try { self.dispatchEvent(new Event('load')); } catch(e) {}
-                    try { self.dispatchEvent(new Event('loadend')); } catch(e) {}
+                try { Object.defineProperty(self, 'readyState',   { get: function () { return 4; }, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(self, 'status',       { get: function () { return 200; }, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(self, 'responseText', { get: function () { return '{}'; }, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(self, 'response',     { get: function () { return '{}'; }, configurable: true }); } catch (e) {}
+                setTimeout(function () {
+                    try { if (typeof self.onreadystatechange === 'function') { self.onreadystatechange(); } } catch (e) {}
+                    try { if (typeof self.onload === 'function') { self.onload(); } } catch (e) {}
+                    try { self.dispatchEvent(new Event('load')); } catch (e) {}
+                    try { self.dispatchEvent(new Event('loadend')); } catch (e) {}
                 }, 0);
                 return;
             }
             return origSend.apply(this, arguments);
         };
 
-        // 4. CSS скрытие рекламных элементов
+        // CSS скрытие рекламных элементов
         function injectCss() {
             var s = document.createElement('style');
             s.textContent = '.ad-preroll,.ad-video-block{display:none!important;visibility:hidden!important;}';
-            (document.head || document.documentElement).appendChild(s);
+            var head = document.head || document.documentElement;
+            head.appendChild(s);
         }
         if (document.head) {
             injectCss();
@@ -96,73 +109,75 @@
             document.addEventListener('DOMContentLoaded', injectCss);
         }
 
-        // 5. Observer — скрываем и удаляем рекламные элементы
-        var adObs = new MutationObserver(function(muts) {
-            muts.forEach(function(m) {
-                m.addedNodes.forEach(function(n) {
-                    if (n.nodeType !== 1) return;
+        // Observer — удаляем рекламные элементы из DOM
+        var adObs = new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var nodes = muts[i].addedNodes;
+                for (var j = 0; j < nodes.length; j++) {
+                    var n = nodes[j];
+                    if (n.nodeType !== 1) { continue; }
                     var cls = typeof n.className === 'string' ? n.className : '';
                     if (cls.indexOf('ad-preroll') !== -1 || cls.indexOf('ad-video-block') !== -1) {
                         n.style.display = 'none';
-                        try { if (n.parentNode) n.parentNode.removeChild(n); } catch(e) {}
+                        try { if (n.parentNode) { n.parentNode.removeChild(n); } } catch (e) {}
                     }
-                });
-            });
+                }
+            }
         });
-        setTimeout(function() {
-            if (document.body) adObs.observe(document.body, { childList: true });
+        setTimeout(function () {
+            if (document.body) { adObs.observe(document.body, { childList: true }); }
         }, 500);
 
-        // 6. Восстановление токенов
-        (function restoreTokens() {
-            if (localStorage.getItem(CONFIG.key_access)) return;
-            var access  = localStorage.getItem(CONFIG.backup_access)  || '';
-            var refresh = localStorage.getItem(CONFIG.backup_refresh) || '';
-            var expire  = localStorage.getItem(CONFIG.backup_expire)  || '0';
-            if (!access || !refresh) return;
-            localStorage.setItem(CONFIG.key_access,  access);
-            localStorage.setItem(CONFIG.key_refresh, refresh);
-            localStorage.setItem(CONFIG.key_expire,  expire);
-            localStorage.setItem(CONFIG.key_logined, 'true');
-            console.log('[KP Keeper] Токены восстановлены из резерва');
-        })();
+    })();
 
+    // ============================================================
+    //  ВОССТАНОВЛЕНИЕ ТОКЕНОВ
+    // ============================================================
+    (function restoreTokens() {
+        if (localStorage.getItem(CONFIG.key_access)) { return; }
+        var access  = localStorage.getItem(CONFIG.backup_access)  || '';
+        var refresh = localStorage.getItem(CONFIG.backup_refresh) || '';
+        var expire  = localStorage.getItem(CONFIG.backup_expire)  || '0';
+        if (!access || !refresh) { return; }
+        localStorage.setItem(CONFIG.key_access,  access);
+        localStorage.setItem(CONFIG.key_refresh, refresh);
+        localStorage.setItem(CONFIG.key_expire,  expire);
+        localStorage.setItem(CONFIG.key_logined, 'true');
+        console.log('[KP Keeper] Токены восстановлены');
     })();
 
     // ============================================================
     //  ХРАНИЛИЩЕ
     // ============================================================
     var TokenStore = {
-        isAuthorized: function() { return !!localStorage.getItem(CONFIG.key_access); },
-        getAccess:    function() { return localStorage.getItem(CONFIG.key_access)  || ''; },
-        getRefresh:   function() { return localStorage.getItem(CONFIG.key_refresh) || ''; },
-        getExpireTime:function() { return parseInt(localStorage.getItem(CONFIG.key_expire) || '0', 10); },
+        isAuthorized: function () { return !!localStorage.getItem(CONFIG.key_access); },
+        getAccess:    function () { return localStorage.getItem(CONFIG.key_access)  || ''; },
+        getRefresh:   function () { return localStorage.getItem(CONFIG.key_refresh) || ''; },
+        getExpireTime:function () { return parseInt(localStorage.getItem(CONFIG.key_expire) || '0', 10); },
 
-        saveTokens: function(access, refresh, expiresIn) {
+        saveTokens: function (access, refresh, expiresIn) {
             var expireAt = Math.floor(Date.now() / 1000) + (expiresIn || 86400);
-            localStorage.setItem(CONFIG.key_access,   access);
-            localStorage.setItem(CONFIG.key_refresh,  refresh);
-            localStorage.setItem(CONFIG.key_expire,   expireAt);
-            localStorage.setItem(CONFIG.key_logined,  'true');
+            localStorage.setItem(CONFIG.key_access,     access);
+            localStorage.setItem(CONFIG.key_refresh,    refresh);
+            localStorage.setItem(CONFIG.key_expire,     expireAt);
+            localStorage.setItem(CONFIG.key_logined,    'true');
             localStorage.setItem(CONFIG.backup_access,  access);
             localStorage.setItem(CONFIG.backup_refresh, refresh);
             localStorage.setItem(CONFIG.backup_expire,  expireAt);
-            try {
-                Lampa.Storage.set(CONFIG.backup_access,  access);
-                Lampa.Storage.set(CONFIG.backup_refresh, refresh);
-                Lampa.Storage.set(CONFIG.backup_expire,  expireAt);
-            } catch(e) {}
+            try { Lampa.Storage.set(CONFIG.backup_access,  access);  } catch (e) {}
+            try { Lampa.Storage.set(CONFIG.backup_refresh, refresh); } catch (e) {}
+            try { Lampa.Storage.set(CONFIG.backup_expire,  expireAt);} catch (e) {}
         },
 
-        secondsLeft: function() {
+        secondsLeft: function () {
             var exp = this.getExpireTime();
-            if (!exp) return 9999;
+            if (!exp) { return 9999; }
             return exp - Math.floor(Date.now() / 1000);
         },
 
-        needsRefresh: function() { return this.secondsLeft() < CONFIG.refresh_threshold_sec; },
+        needsRefresh: function () { return this.secondsLeft() < CONFIG.refresh_threshold_sec; },
 
-        initExpireIfMissing: function() {
+        initExpireIfMissing: function () {
             if (!localStorage.getItem(CONFIG.key_expire) && this.isAuthorized()) {
                 var exp = Math.floor(Date.now() / 1000) + 86400;
                 localStorage.setItem(CONFIG.key_expire,    exp);
@@ -175,22 +190,22 @@
     //  HTTP
     // ============================================================
     var Http = {
-        post: function(url, params, onSuccess, onError) {
+        post: function (url, params, onSuccess, onError) {
             var body = Object.keys(params)
-                .map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+                .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
                 .join('&');
             var xhr = new XMLHttpRequest();
             xhr.open('POST', url, true);
             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
             xhr.setRequestHeader('Accept', 'application/json');
-            xhr.onload = function() {
+            xhr.onload = function () {
                 if (xhr.status >= 200 && xhr.status < 300) {
-                    try { onSuccess(JSON.parse(xhr.responseText)); } catch(e) { onError(0, 'parse'); }
+                    try { onSuccess(JSON.parse(xhr.responseText)); } catch (e) { onError(0, 'parse'); }
                 } else {
                     onError(xhr.status, xhr.statusText);
                 }
             };
-            xhr.onerror = function() { onError(0, 'network'); };
+            xhr.onerror = function () { onError(0, 'network'); };
             xhr.send(body);
         }
     };
@@ -201,10 +216,10 @@
     var TokenRefresher = {
         _busy: false,
 
-        refresh: function(onOk, onFail) {
-            if (this._busy) return;
+        refresh: function (onOk, onFail) {
+            if (this._busy) { return; }
             var rt = TokenStore.getRefresh();
-            if (!rt) { if (onFail) onFail('no_rt'); return; }
+            if (!rt) { if (onFail) { onFail('no_rt'); } return; }
             this._busy = true;
             var self = this;
             Http.post(CONFIG.oauth_url, {
@@ -212,31 +227,31 @@
                 client_id:     CONFIG.client_id,
                 client_secret: CONFIG.client_secret,
                 refresh_token: rt
-            }, function(resp) {
+            }, function (resp) {
                 self._busy = false;
                 if (resp.access_token) {
                     TokenStore.saveTokens(resp.access_token, resp.refresh_token || rt, resp.expires_in || 86400);
-                    if (onOk) onOk(resp);
+                    if (onOk) { onOk(resp); }
                 } else {
-                    if (onFail) onFail('empty');
+                    if (onFail) { onFail('empty'); }
                 }
-            }, function(status) {
+            }, function (status) {
                 self._busy = false;
                 if (status === 400 || status === 401) {
                     localStorage.removeItem(CONFIG.backup_access);
                     localStorage.removeItem(CONFIG.backup_refresh);
                     localStorage.removeItem(CONFIG.backup_expire);
-                    try { Lampa.Storage.set(CONFIG.backup_access, ''); } catch(e) {}
-                    try { Lampa.Storage.set(CONFIG.backup_refresh, ''); } catch(e) {}
-                    try { Lampa.Storage.set(CONFIG.backup_expire, 0); } catch(e) {}
-                    Lampa.Noty.show('Kino.pub: сессия истекла — войдите через Modss → Online → KinoPub');
+                    try { Lampa.Storage.set(CONFIG.backup_access,  ''); } catch (e) {}
+                    try { Lampa.Storage.set(CONFIG.backup_refresh, ''); } catch (e) {}
+                    try { Lampa.Storage.set(CONFIG.backup_expire,   0); } catch (e) {}
+                    Lampa.Noty.show('Kino.pub: сессия истекла — войдите через Modss');
                 }
-                if (onFail) onFail(status);
+                if (onFail) { onFail(status); }
             });
         },
 
-        checkAndRefresh: function() {
-            if (!TokenStore.isAuthorized()) return;
+        checkAndRefresh: function () {
+            if (!TokenStore.isAuthorized()) { return; }
             if (TokenStore.needsRefresh()) { this.refresh(null, null); }
         }
     };
@@ -248,11 +263,11 @@
         _timer: null,
         _last:  '',
 
-        start: function() {
-            if (this._timer) return;
+        start: function () {
+            if (this._timer) { return; }
             this._last = TokenStore.getAccess();
-            setTimeout(function() { TokenRefresher.checkAndRefresh(); }, 5000);
-            this._timer = setInterval(function() {
+            setTimeout(function () { TokenRefresher.checkAndRefresh(); }, 5000);
+            this._timer = setInterval(function () {
                 var cur = TokenStore.getAccess();
                 if (cur && cur !== Watchdog._last) {
                     Watchdog._last = cur;
@@ -267,7 +282,7 @@
     //  UI
     // ============================================================
     var SettingsUI = {
-        init: function() {
+        init: function () {
             Lampa.SettingsApi.addComponent({
                 component: 'kinopub_keeper',
                 name:      'Kino.pub Keeper',
@@ -282,7 +297,7 @@
                         ? 'Авторизован ✓ — нажмите для обновления'
                         : 'Не авторизован — войдите через Modss → Online → KinoPub'
                 },
-                onChange: function() {
+                onChange: function () {
                     Lampa.Storage.set('kinopub_keeper_status', false);
                     if (!TokenStore.isAuthorized()) {
                         Lampa.Noty.show('Kino.pub: не авторизован');
@@ -293,8 +308,8 @@
                     var mins  = Math.floor((left % 3600) / 60);
                     Lampa.Noty.show('Kino.pub: ~' + hours + 'ч ' + mins + 'мин, обновляем...');
                     TokenRefresher.refresh(
-                        function() { Lampa.Noty.show('Kino.pub: токен обновлён'); },
-                        function() { Lampa.Noty.show('Kino.pub: ошибка обновления'); }
+                        function () { Lampa.Noty.show('Kino.pub: токен обновлён'); },
+                        function () { Lampa.Noty.show('Kino.pub: ошибка обновления'); }
                     );
                 }
             });
@@ -305,7 +320,7 @@
     //  ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     function initPlugin() {
-        if (window._kinopubKeeperInited) return;
+        if (window._kinopubKeeperInited) { return; }
         window._kinopubKeeperInited = true;
 
         if (TokenStore.isAuthorized()) {
@@ -316,349 +331,33 @@
         SettingsUI.init();
         Watchdog.start();
 
-        // Лог событий Lampa для диагностики паузы
+        // Лог событий Lampa для диагностики
         var evLog = [];
         var evEl  = null;
+
         function showEvLog() {
             if (!evEl) {
                 evEl = document.createElement('div');
                 evEl.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#ff0;font-size:11px;padding:8px;max-width:800px;border-radius:6px;pointer-events:none;line-height:1.5;';
-                document.body && document.body.appendChild(evEl);
+                if (document.body) { document.body.appendChild(evEl); }
             }
-            if (evEl) evEl.innerHTML = '<b>Events:</b><br>' + evLog.slice(-10).join('<br>');
+            if (evEl) { evEl.innerHTML = '<b>Events:</b><br>' + evLog.slice(-10).join('<br>'); }
         }
+
         try {
             var origLSend = Lampa.Listener.send.bind(Lampa.Listener);
-            Lampa.Listener.send = function(name, data) {
+            Lampa.Listener.send = function (name, data) {
                 var extra = '';
                 if (name === 'state:changed' && data) {
-                    extra = ' > ' + JSON.stringify(data).substring(0, 40);
-                }
-                if (name === 'request_before' && data && data.url) {
-                    extra = ' > ' + data.url.substring(0, 40);
+                    try { extra = ' > ' + JSON.stringify(data).substring(0, 40); } catch (e) {}
                 }
                 evLog.push((Date.now() % 100000) + ': ' + name + extra);
                 setTimeout(showEvLog, 50);
                 return origLSend(name, data);
             };
-        } catch(e) {}
+        } catch (e) {}
 
-        console.log('[KP Keeper] v2.5.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
-    }
-
-    function tryInit() {
-        if (window.Lampa && Lampa.Storage && Lampa.Listener && Lampa.SettingsApi && Lampa.Noty) {
-            initPlugin();
-        } else {
-            setTimeout(tryInit, 200);
-        }
-    }
-
-    tryInit();
-
-})();        window.WebSocket = function(url, protocols) {
-            var blocked = AD_WS.some(function(d) { return url.indexOf(d) !== -1; });
-            if (blocked) {
-                return { send:function(){}, close:function(){}, addEventListener:function(){}, removeEventListener:function(){}, readyState:3 };
-            }
-            return protocols ? new OrigWS(url, protocols) : new OrigWS(url);
-        };
-        window.WebSocket.prototype = OrigWS.prototype;
-
-        // 3. Блокируем рекламные HTTP запросы
-        var AD_HTTP = ['yandex.ru/ads/adfox', 'ads.betweendigital.com'];
-
-        var origFetch = window.fetch;
-        window.fetch = function(url) {
-            var u = typeof url === 'string' ? url : (url && url.url) || '';
-            var blocked = AD_HTTP.some(function(d) { return u.indexOf(d) !== -1; });
-            if (blocked) {
-                return Promise.resolve(new Response('{}', { status: 200 }));
-            }
-            return origFetch.apply(this, arguments);
-        };
-
-        var origOpen = XMLHttpRequest.prototype.open;
-        var origSend = XMLHttpRequest.prototype.send;
-
-        XMLHttpRequest.prototype.open = function(method, url) {
-            this._kpUrl = url || '';
-            return origOpen.apply(this, arguments);
-        };
-
-        XMLHttpRequest.prototype.send = function(body) {
-            var url = this._kpUrl || '';
-            var blocked = AD_HTTP.some(function(d) { return url.indexOf(d) !== -1; });
-            if (blocked) {
-                var self = this;
-                try { Object.defineProperty(self, 'readyState',   { get: function(){ return 4; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'status',       { get: function(){ return 200; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'responseText', { get: function(){ return '{}'; }, configurable: true }); } catch(e) {}
-                try { Object.defineProperty(self, 'response',     { get: function(){ return '{}'; }, configurable: true }); } catch(e) {}
-                setTimeout(function() {
-                    try { if (typeof self.onreadystatechange === 'function') self.onreadystatechange(); } catch(e) {}
-                    try { if (typeof self.onload === 'function') self.onload(); } catch(e) {}
-                    try { self.dispatchEvent(new Event('load')); } catch(e) {}
-                    try { self.dispatchEvent(new Event('loadend')); } catch(e) {}
-                }, 0);
-                return;
-            }
-            return origSend.apply(this, arguments);
-        };
-
-        // 4. CSS скрытие рекламных элементов
-        function injectCss() {
-            var s = document.createElement('style');
-            s.textContent = '.ad-preroll,.ad-video-block{display:none!important;visibility:hidden!important;}';
-            (document.head || document.documentElement).appendChild(s);
-        }
-        if (document.head) {
-            injectCss();
-        } else {
-            document.addEventListener('DOMContentLoaded', injectCss);
-        }
-
-        // 5. Observer — скрываем и удаляем рекламные элементы
-        var adObs = new MutationObserver(function(muts) {
-            muts.forEach(function(m) {
-                m.addedNodes.forEach(function(n) {
-                    if (n.nodeType !== 1) return;
-                    var cls = typeof n.className === 'string' ? n.className : '';
-                    if (cls.indexOf('ad-preroll') !== -1 || cls.indexOf('ad-video-block') !== -1) {
-                        n.style.display = 'none';
-                        try { if (n.parentNode) n.parentNode.removeChild(n); } catch(e) {}
-                    }
-                });
-            });
-        });
-        setTimeout(function() {
-            if (document.body) adObs.observe(document.body, { childList: true });
-        }, 500);
-
-        // 6. Восстановление токенов
-        (function restoreTokens() {
-            if (localStorage.getItem(CONFIG.key_access)) return;
-            var access  = localStorage.getItem(CONFIG.backup_access)  || '';
-            var refresh = localStorage.getItem(CONFIG.backup_refresh) || '';
-            var expire  = localStorage.getItem(CONFIG.backup_expire)  || '0';
-            if (!access || !refresh) return;
-            localStorage.setItem(CONFIG.key_access,  access);
-            localStorage.setItem(CONFIG.key_refresh, refresh);
-            localStorage.setItem(CONFIG.key_expire,  expire);
-            localStorage.setItem(CONFIG.key_logined, 'true');
-            console.log('[KP Keeper] Токены восстановлены из резерва');
-        })();
-
-    })();
-
-    // ============================================================
-    //  ХРАНИЛИЩЕ
-    // ============================================================
-    var TokenStore = {
-        isAuthorized: function() { return !!localStorage.getItem(CONFIG.key_access); },
-        getAccess:    function() { return localStorage.getItem(CONFIG.key_access)  || ''; },
-        getRefresh:   function() { return localStorage.getItem(CONFIG.key_refresh) || ''; },
-        getExpireTime:function() { return parseInt(localStorage.getItem(CONFIG.key_expire) || '0', 10); },
-
-        saveTokens: function(access, refresh, expiresIn) {
-            var expireAt = Math.floor(Date.now() / 1000) + (expiresIn || 86400);
-            localStorage.setItem(CONFIG.key_access,   access);
-            localStorage.setItem(CONFIG.key_refresh,  refresh);
-            localStorage.setItem(CONFIG.key_expire,   expireAt);
-            localStorage.setItem(CONFIG.key_logined,  'true');
-            localStorage.setItem(CONFIG.backup_access,  access);
-            localStorage.setItem(CONFIG.backup_refresh, refresh);
-            localStorage.setItem(CONFIG.backup_expire,  expireAt);
-            try {
-                Lampa.Storage.set(CONFIG.backup_access,  access);
-                Lampa.Storage.set(CONFIG.backup_refresh, refresh);
-                Lampa.Storage.set(CONFIG.backup_expire,  expireAt);
-            } catch(e) {}
-        },
-
-        secondsLeft: function() {
-            var exp = this.getExpireTime();
-            if (!exp) return 9999;
-            return exp - Math.floor(Date.now() / 1000);
-        },
-
-        needsRefresh: function() { return this.secondsLeft() < CONFIG.refresh_threshold_sec; },
-
-        initExpireIfMissing: function() {
-            if (!localStorage.getItem(CONFIG.key_expire) && this.isAuthorized()) {
-                var exp = Math.floor(Date.now() / 1000) + 86400;
-                localStorage.setItem(CONFIG.key_expire,    exp);
-                localStorage.setItem(CONFIG.backup_expire, exp);
-            }
-        }
-    };
-
-    // ============================================================
-    //  HTTP
-    // ============================================================
-    var Http = {
-        post: function(url, params, onSuccess, onError) {
-            var body = Object.keys(params)
-                .map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
-                .join('&');
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', url, true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            xhr.setRequestHeader('Accept', 'application/json');
-            xhr.onload = function() {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    try { onSuccess(JSON.parse(xhr.responseText)); } catch(e) { onError(0, 'parse'); }
-                } else {
-                    onError(xhr.status, xhr.statusText);
-                }
-            };
-            xhr.onerror = function() { onError(0, 'network'); };
-            xhr.send(body);
-        }
-    };
-
-    // ============================================================
-    //  ОБНОВЛЕНИЕ ТОКЕНА
-    // ============================================================
-    var TokenRefresher = {
-        _busy: false,
-
-        refresh: function(onOk, onFail) {
-            if (this._busy) return;
-            var rt = TokenStore.getRefresh();
-            if (!rt) { if (onFail) onFail('no_rt'); return; }
-            this._busy = true;
-            var self = this;
-            Http.post(CONFIG.oauth_url, {
-                grant_type:    'refresh_token',
-                client_id:     CONFIG.client_id,
-                client_secret: CONFIG.client_secret,
-                refresh_token: rt
-            }, function(resp) {
-                self._busy = false;
-                if (resp.access_token) {
-                    TokenStore.saveTokens(resp.access_token, resp.refresh_token || rt, resp.expires_in || 86400);
-                    if (onOk) onOk(resp);
-                } else {
-                    if (onFail) onFail('empty');
-                }
-            }, function(status) {
-                self._busy = false;
-                if (status === 400 || status === 401) {
-                    localStorage.removeItem(CONFIG.backup_access);
-                    localStorage.removeItem(CONFIG.backup_refresh);
-                    localStorage.removeItem(CONFIG.backup_expire);
-                    try { Lampa.Storage.set(CONFIG.backup_access, ''); } catch(e) {}
-                    try { Lampa.Storage.set(CONFIG.backup_refresh, ''); } catch(e) {}
-                    try { Lampa.Storage.set(CONFIG.backup_expire, 0); } catch(e) {}
-                    Lampa.Noty.show('Kino.pub: сессия истекла — войдите через Modss → Online → KinoPub');
-                }
-                if (onFail) onFail(status);
-            });
-        },
-
-        checkAndRefresh: function() {
-            if (!TokenStore.isAuthorized()) return;
-            if (TokenStore.needsRefresh()) { this.refresh(null, null); }
-        }
-    };
-
-    // ============================================================
-    //  WATCHDOG
-    // ============================================================
-    var Watchdog = {
-        _timer: null,
-        _last:  '',
-
-        start: function() {
-            if (this._timer) return;
-            this._last = TokenStore.getAccess();
-            setTimeout(function() { TokenRefresher.checkAndRefresh(); }, 5000);
-            this._timer = setInterval(function() {
-                var cur = TokenStore.getAccess();
-                if (cur && cur !== Watchdog._last) {
-                    Watchdog._last = cur;
-                    TokenStore.saveTokens(cur, TokenStore.getRefresh(), TokenStore.secondsLeft());
-                }
-                TokenRefresher.checkAndRefresh();
-            }, CONFIG.check_interval_ms);
-        }
-    };
-
-    // ============================================================
-    //  UI
-    // ============================================================
-    var SettingsUI = {
-        init: function() {
-            Lampa.SettingsApi.addComponent({
-                component: 'kinopub_keeper',
-                name:      'Kino.pub Keeper',
-                icon:      '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.5-2.33 6.79-5 7.93-2.67-1.14-5-4.43-5-7.93V7.18L12 5z"/></svg>'
-            });
-            Lampa.SettingsApi.addParam({
-                component: 'kinopub_keeper',
-                param: { name: 'kinopub_keeper_status', type: 'trigger', default: false },
-                field: {
-                    name:        'Статус',
-                    description: TokenStore.isAuthorized()
-                        ? 'Авторизован ✓ — нажмите для обновления'
-                        : 'Не авторизован — войдите через Modss → Online → KinoPub'
-                },
-                onChange: function() {
-                    Lampa.Storage.set('kinopub_keeper_status', false);
-                    if (!TokenStore.isAuthorized()) {
-                        Lampa.Noty.show('Kino.pub: не авторизован');
-                        return;
-                    }
-                    var left  = TokenStore.secondsLeft();
-                    var hours = Math.floor(left / 3600);
-                    var mins  = Math.floor((left % 3600) / 60);
-                    Lampa.Noty.show('Kino.pub: ~' + hours + 'ч ' + mins + 'мин, обновляем...');
-                    TokenRefresher.refresh(
-                        function() { Lampa.Noty.show('Kino.pub: токен обновлён'); },
-                        function() { Lampa.Noty.show('Kino.pub: ошибка обновления'); }
-                    );
-                }
-            });
-        }
-    };
-
-    // ============================================================
-    //  ИНИЦИАЛИЗАЦИЯ
-    // ============================================================
-    function initPlugin() {
-        if (window._kinopubKeeperInited) return;
-        window._kinopubKeeperInited = true;
-
-        if (TokenStore.isAuthorized()) {
-            TokenStore.initExpireIfMissing();
-            TokenStore.saveTokens(TokenStore.getAccess(), TokenStore.getRefresh(), TokenStore.secondsLeft());
-        }
-
-        SettingsUI.init();
-        Watchdog.start();
-
-        // Лог событий Lampa для диагностики паузы
-        var evLog = [];
-        var evEl  = null;
-        function showEvLog() {
-            if (!evEl) {
-                evEl = document.createElement('div');
-                evEl.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#ff0;font-size:11px;padding:8px;max-width:800px;border-radius:6px;pointer-events:none;line-height:1.5;';
-                document.body && document.body.appendChild(evEl);
-            }
-            if (evEl) evEl.innerHTML = '<b>Events:</b><br>' + evLog.slice(-10).join('<br>');
-        }
-        try {
-            var origLSend = Lampa.Listener.send.bind(Lampa.Listener);
-            Lampa.Listener.send = function(name, data) {
-                evLog.push((Date.now() % 100000) + ': ' + name);
-                setTimeout(showEvLog, 50);
-                return origLSend(name, data);
-            };
-        } catch(e) {}
-
-        console.log('[KP Keeper] v2.5.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
+        console.log('[KP Keeper] v2.5.2 инициализирован. Авторизован:', TokenStore.isAuthorized());
     }
 
     function tryInit() {
