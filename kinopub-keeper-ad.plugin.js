@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.3.0 (WebSocket визуальный лог для диагностики TV)
+ *  Version: 2.3.1 (+ HTTP/XHR перехват для поиска рекламных запросов)
  * ============================================================
  */
 
@@ -78,6 +78,31 @@
         };
         window.WebSocket.prototype = OrigWS.prototype;
         console.log('[KP Keeper] WebSocket лог установлен');
+
+        // Перехватываем fetch для поиска рекламных запросов
+        var origFetch = window.fetch;
+        window.fetch = function(url) {
+            var u = typeof url === 'string' ? url : (url && url.url) || '';
+            var domain = '';
+            try { domain = new URL(u).hostname; } catch(e) { domain = u.substring(0, 40); }
+            if (u.indexOf('ad') !== -1 || u.indexOf('vast') !== -1 || u.indexOf('preroll') !== -1 || u.indexOf('banner') !== -1) {
+                wsLog.push('🎯 FETCH: ' + domain);
+                setTimeout(showWsLog, 100);
+                console.log('[KP AD] fetch:', u);
+            }
+            return origFetch.apply(this, arguments);
+        };
+
+        // Перехватываем XHR
+        var origXHROpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            if (url && (url.indexOf('ad') !== -1 || url.indexOf('vast') !== -1 || url.indexOf('preroll') !== -1 || url.indexOf('banner') !== -1)) {
+                wsLog.push('🎯 XHR: ' + url.substring(0, 60));
+                setTimeout(showWsLog, 100);
+                console.log('[KP AD] XHR:', url);
+            }
+            return origXHROpen.apply(this, arguments);
+        };
 
         // Восстановление токенов
         var hasToken = !!localStorage.getItem(CONFIG.key_access);
