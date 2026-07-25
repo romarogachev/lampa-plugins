@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.4.0 (блокировка Яндекс AdFox + BetweenDigital)
+ *  Version: 2.4.1 (мгновенный ответ для рекламных XHR)
  * ============================================================
  */
 
@@ -109,9 +109,20 @@
                 setTimeout(showWsLog, 100);
                 console.log('[KP AD] Заблокирован XHR:', url);
                 var self = this;
+                // Немедленно эмулируем успешный пустой ответ
+                try {
+                    Object.defineProperty(self, 'readyState',   { get: function(){ return 4; }, configurable: true });
+                    Object.defineProperty(self, 'status',       { get: function(){ return 200; }, configurable: true });
+                    Object.defineProperty(self, 'responseText', { get: function(){ return '{"ads":[],"items":[]}'; }, configurable: true });
+                    Object.defineProperty(self, 'response',     { get: function(){ return '{"ads":[],"items":[]}'; }, configurable: true });
+                } catch(e) {}
+                // Вызываем все возможные колбэки немедленно
                 setTimeout(function() {
-                    if (typeof self.onload === 'function') self.onload();
-                }, 10);
+                    try { if (typeof self.onreadystatechange === 'function') self.onreadystatechange(); } catch(e) {}
+                    try { if (typeof self.onload === 'function') self.onload(); } catch(e) {}
+                    try { self.dispatchEvent(new Event('load')); } catch(e) {}
+                    try { self.dispatchEvent(new Event('loadend')); } catch(e) {}
+                }, 0);
                 return;
             }
             return origXHRSend.apply(this, arguments);
