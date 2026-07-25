@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.5.1 (чистая блокировка рекламы, без логов)
+ *  Version: 2.6.0 (чистая блокировка рекламы, без логов)
  * ============================================================
  */
 
@@ -87,32 +87,51 @@
             return origXHRSend.apply(this, arguments);
         };
 
-        // 4. Скрываем рекламные элементы через CSS + лёгкий observer
+        // 4. Перехватываем рекламный блок и немедленно сигнализируем о завершении
         (function hideAdElements() {
-            // CSS — мгновенно скрывает элементы по классу
+            // CSS — скрываем визуально
             function injectCss() {
                 var s = document.createElement('style');
-                s.textContent = '.ad-preroll,.ad-video-block{display:none!important}';
+                s.textContent = '.ad-preroll,.ad-video-block{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}';
                 (document.head || document.documentElement).appendChild(s);
             }
             if (document.head) { injectCss(); }
             else { document.addEventListener('DOMContentLoaded', injectCss); }
 
-            // Observer — страховка на случай если CSS не успел
+            // Observer — как только появился ad-preroll, сразу посылаем событие завершения
             var obs = new MutationObserver(function(muts) {
                 muts.forEach(function(m) {
                     m.addedNodes.forEach(function(n) {
                         if (n.nodeType !== 1) return;
                         var cls = typeof n.className === 'string' ? n.className : '';
-                        if (cls.indexOf('ad-preroll') !== -1 || cls.indexOf('ad-video-block') !== -1) {
+                        if (cls.indexOf('ad-preroll') !== -1) {
                             n.style.display = 'none';
+                            // Посылаем все возможные события завершения рекламы
+                            setTimeout(function() {
+                                try { n.dispatchEvent(new Event('ended')); } catch(e) {}
+                                try { n.dispatchEvent(new Event('complete')); } catch(e) {}
+                                try { n.dispatchEvent(new Event('adComplete')); } catch(e) {}
+                                try { n.dispatchEvent(new Event('adEnded')); } catch(e) {}
+                                try { document.dispatchEvent(new Event('adComplete')); } catch(e) {}
+                                try { document.dispatchEvent(new Event('adEnded')); } catch(e) {}
+                                // Ищем кнопку пропуска и кликаем её
+                                var skip = n.querySelector('[class*="skip"], [class*="close"], [class*="next"]');
+                                if (skip) { try { skip.click(); } catch(e) {} }
+                                // Удаляем элемент полностью
+                                try { if (n.parentNode) n.parentNode.removeChild(n); } catch(e) {}
+                                console.log('[KP AD] ad-preroll уничтожен');
+                            }, 0);
+                        }
+                        if (cls.indexOf('ad-video-block') !== -1) {
+                            n.style.display = 'none';
+                            try { if (n.parentNode) n.parentNode.removeChild(n); } catch(e) {}
                         }
                     });
                 });
             });
             setTimeout(function() {
-                if (document.body) obs.observe(document.body, { childList: true });
-            }, 1000);
+                if (document.body) obs.observe(document.body, { childList: true, subtree: true });
+            }, 500);
         })();
 
         // 5. Восстановление токенов из резерва если localStorage пуст
