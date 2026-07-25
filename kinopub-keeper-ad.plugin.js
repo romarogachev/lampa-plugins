@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.1.1
+ *  Version: 2.2.0
  *
  *  Ключевое улучшение: восстановление токенов происходит
  *  НЕМЕДЛЕННО при загрузке скрипта, до инициализации Lampa.
@@ -39,6 +39,27 @@
         // Отключаем рекламу Modss
         localStorage.setItem('showModssVip', 'true');
         console.log('[KP Keeper] VIP флаг установлен, реклама отключена');
+
+        // Блокируем рекламные WebSocket
+        var AD_DOMAINS = ['kurwa-bober.ninja', 'nackhui.com'];
+        var OrigWS = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+            var isAd = AD_DOMAINS.some(function(d) { return url.indexOf(d) !== -1; });
+            if (isAd) {
+                console.log('[KP Keeper] Заблокирован рекламный WebSocket:', url);
+                var fake = {
+                    send: function(){},
+                    close: function(){},
+                    addEventListener: function(){},
+                    removeEventListener: function(){},
+                    readyState: 3
+                };
+                return fake;
+            }
+            return protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+        };
+        window.WebSocket.prototype = OrigWS.prototype;
+        console.log('[KP Keeper] WebSocket блокировка рекламы установлена');
 
         var hasToken = !!localStorage.getItem(CONFIG.key_access);
         if (hasToken) {
