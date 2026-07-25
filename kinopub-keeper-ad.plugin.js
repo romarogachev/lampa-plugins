@@ -1,6 +1,14 @@
 /**
  * Kino.pub Token Keeper + Ad Blocker
- * Version: 3.2.0
+ * Version: 3.2.1 (финальная)
+ *
+ * Что делает:
+ * - Блокирует рекламу Яндекс AdFox и BetweenDigital
+ * - Скрывает рекламные DOM элементы (.ad-preroll, .ad-video-block)
+ * - Устанавливает VIP флаг Modss
+ * - Хранит токены KinoPub в резерве (localStorage + Lampa.Storage)
+ * - Восстанавливает токены после выключения TV
+ * - Автообновляет токен за 10 минут до истечения
  */
 
 (function () {
@@ -101,7 +109,7 @@
         if (document.head) { injectCss(); }
         else { document.addEventListener('DOMContentLoaded', injectCss); }
 
-        // Observer — скрываем рекламные элементы
+        // Observer
         var adObs = new MutationObserver(function (muts) {
             var ii, jj, nodes, n, cls;
             for (ii = 0; ii < muts.length; ii++) {
@@ -327,8 +335,6 @@
     //  ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     function initPlugin() {
-        var evLog, evEl, origLSend;
-
         if (!window._kinopubKeeperInited) {
             window._kinopubKeeperInited = true;
 
@@ -340,36 +346,7 @@
             SettingsUI.init();
             Watchdog.start();
 
-            // Лог событий
-            evLog = [];
-            evEl  = null;
-
-            function showEvLog() {
-                if (!evEl) {
-                    evEl = document.createElement('div');
-                    evEl.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#ff0;font-size:11px;padding:8px;max-width:800px;border-radius:6px;pointer-events:none;line-height:1.5;';
-                    if (document.body) { document.body.appendChild(evEl); }
-                }
-                if (evEl) { evEl.innerHTML = '<b>Events:</b><br>' + evLog.slice(-10).join('<br>'); }
-            }
-
-            try {
-                origLSend = Lampa.Listener.send.bind(Lampa.Listener);
-                Lampa.Listener.send = function (name, data) {
-                    var extra = '';
-                    if (name === 'state:changed' && data) {
-                        try { extra = ' > ' + JSON.stringify(data).substring(0, 40); } catch (e) {}
-                    }
-                    if (name === 'request_before' && data) {
-                        try { extra = ' > ' + JSON.stringify(data).substring(0, 50); } catch (e) {}
-                    }
-                    evLog.push((Date.now() % 100000) + ': ' + name + extra);
-                    setTimeout(showEvLog, 50);
-                    origLSend(name, data);
-                };
-            } catch (e) {}
-
-            console.log('[KP Keeper] v3.2.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
+            console.log('[KP Keeper] v3.2.1 инициализирован. Авторизован:', TokenStore.isAuthorized());
         }
     }
 
