@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.5.0 (чистая блокировка рекламы, без логов)
+ *  Version: 2.5.1 (чистая блокировка рекламы, без логов)
  * ============================================================
  */
 
@@ -47,7 +47,7 @@
         window.WebSocket.prototype = OrigWS.prototype;
 
         // 3. Блокируем рекламные HTTP запросы (Яндекс AdFox + BetweenDigital)
-        var AD_HTTP = ['yandex.ru/ads', 'adfox', 'betweendigital.com', 'ads.between'];
+        var AD_HTTP = ['yandex.ru/ads/adfox', 'ads.betweendigital.com'];
 
         var origFetch = window.fetch;
         window.fetch = function(url) {
