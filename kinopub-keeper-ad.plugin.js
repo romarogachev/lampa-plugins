@@ -1,7 +1,7 @@
 /**
  * ============================================================
  *  Kino.pub Token Keeper for Lampa + online_mod
- *  Version: 2.4.3 (чистая блокировка рекламы, без логов)
+ *  Version: 2.4.4-diag (чистая блокировка рекламы, без логов)
  * ============================================================
  */
 
@@ -87,7 +87,37 @@
             return origXHRSend.apply(this, arguments);
         };
 
-        // 4. Восстановление токенов из резерва если localStorage пуст
+        // 4. DOM лог — только для диагностики серого слайда
+        // Лёгкий observer только за прямыми потомками body
+        var _diagEl = null;
+        var _diagLog = [];
+        function _showDiag() {
+            if (!document.body) return;
+            if (!_diagEl) {
+                _diagEl = document.createElement('div');
+                _diagEl.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#0f0;font-size:11px;padding:8px;max-width:500px;border-radius:6px;pointer-events:none;line-height:1.5;';
+                document.body.appendChild(_diagEl);
+            }
+            _diagEl.innerHTML = _diagLog.slice(-6).join('<br>');
+        }
+        var _obs = new MutationObserver(function(muts) {
+            muts.forEach(function(m) {
+                m.addedNodes.forEach(function(n) {
+                    if (n.nodeType !== 1) return;
+                    var cls = typeof n.className === 'string' ? n.className : '';
+                    var id  = n.id || '';
+                    if (cls || id) {
+                        _diagLog.push('.' + cls.split(' ')[0] + (id ? '#'+id : ''));
+                        setTimeout(_showDiag, 50);
+                    }
+                });
+            });
+        });
+        setTimeout(function() {
+            if (document.body) _obs.observe(document.body, { childList: true });
+        }, 2000);
+
+        // 5. Восстановление токенов из резерва если localStorage пуст
         (function restoreTokens() {
             if (localStorage.getItem(CONFIG.key_access)) return;
 
