@@ -1,8 +1,9 @@
 /**
  * Kino.pub Token Keeper + Ad Blocker
- * Version: 3.3.0
+ * Version: 3.5.0
  *
  * Что делает:
+ * - Блокирует запросы рекламы CUB (/api/ad/get/preroll и /banner)
  * - Блокирует рекламу Яндекс AdFox и BetweenDigital
  * - Рекламное видео (если всё же загрузилось): глушит звук и мгновенно
  *   доматывает до конца, чтобы CUB сразу запускал фильм
@@ -57,6 +58,7 @@
         // HTTP
         AD_HTTP = ['yandex.ru/ads/adfox', 'ads.betweendigital.com'];
 
+
         function isAd(url) {
             var k, found = false;
             for (k = 0; k < AD_HTTP.length; k++) {
@@ -65,9 +67,23 @@
             return found;
         }
 
+        // Запросы рекламы к самому CUB (домен меняется: cub.rip, cub.best...)
+        // Отвечаем сетевой ошибкой — CUB считает, что рекламы нет
+        var AD_ERR = ['/api/ad/get/'];
+        function isAdErr(url) {
+            var k, found = false;
+            for (k = 0; k < AD_ERR.length; k++) {
+                if (url && String(url).indexOf(AD_ERR[k]) !== -1) { found = true; }
+            }
+            return found;
+        }
+
         origFetch = window.fetch;
         window.fetch = function (url) {
-            var u = typeof url === 'string' ? url : '';
+            var u = typeof url === 'string' ? url : (url && url.url ? url.url : '');
+            if (isAdErr(u)) {
+                return Promise.reject(new TypeError('Failed to fetch'));
+            }
             if (isAd(u)) {
                 return Promise.resolve(new Response('{}', { status: 200 }));
             }
@@ -84,7 +100,15 @@
 
         XMLHttpRequest.prototype.send = function (body) {
             var _this = this;
-            if (isAd(_this._kpUrl || '')) {
+            if (isAdErr(_this._kpUrl || '')) {
+                try { Object.defineProperty(_this, 'readyState', { get: function () { return 4; }, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(_this, 'status',     { get: function () { return 0; }, configurable: true }); } catch (e) {}
+                setTimeout(function () {
+                    try { if (typeof _this.onerror === 'function') { _this.onerror(); } } catch (e) {}
+                    try { _this.dispatchEvent(new Event('error')); } catch (e) {}
+                    try { _this.dispatchEvent(new Event('loadend')); } catch (e) {}
+                }, 0);
+            } else if (isAd(_this._kpUrl || '')) {
                 try { Object.defineProperty(_this, 'readyState',   { get: function () { return 4; }, configurable: true }); } catch (e) {}
                 try { Object.defineProperty(_this, 'status',       { get: function () { return 200; }, configurable: true }); } catch (e) {}
                 try { Object.defineProperty(_this, 'responseText', { get: function () { return '{}'; }, configurable: true }); } catch (e) {}
@@ -134,24 +158,64 @@
         }
 
         function seekToEnd(v) {
-            if (isFinite(v.duration) && v.duration > 0) {
-                try { v.currentTime = v.duration; } catch (e) {}
+            if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) {
+                try { v.currentTime = v.duration - 0.1; } catch (e) {}
+            }
+        }
+
+        function speedUp(v) {
+            var rates = [16, 8, 4, 2], k, ok = false;
+            for (k = 0; k < rates.length && !ok; k++) {
+                try { v.playbackRate = rates[k]; ok = v.playbackRate === rates[k]; } catch (e) {}
+            }
+        }
+
+        function clickSkip(v) {
+            var box = v.parentNode, c, btns, b;
+            while (box && box !== document.body) {
+                c = typeof box.className === 'string' ? box.className : '';
+                if (c.indexOf('ad-preroll') !== -1) {
+                    btns = box.querySelectorAll('[class*="skip"],[class*="close"],[class*="next"]');
+                    for (b = 0; b < btns.length; b++) {
+                        try { btns[b].click(); } catch (e) {}
+                    }
+                    box = null;
+                } else {
+                    box = box.parentNode;
+                }
             }
         }
 
         function finishAd(v) {
             var key = v.currentSrc || v.src || 'ad';
+            var ticks = 0, timer;
             try { v.muted = true; v.volume = 0; } catch (e) {}
             if (v._kpDone !== key) {
                 v._kpDone = key;
+                speedUp(v);
                 seekToEnd(v);
-                v.addEventListener('loadedmetadata', function () { seekToEnd(v); });
+                v.addEventListener('loadedmetadata', function () { speedUp(v); seekToEnd(v); });
+                v.addEventListener('durationchange', function () { seekToEnd(v); });
+                v.addEventListener('ratechange', function () {
+                    if (v._kpDone === key && v.playbackRate < 2) { speedUp(v); }
+                });
+                timer = setInterval(function () {
+                    ticks++;
+                    if (v._kpDone !== key || v.ended || ticks > 40) {
+                        clearInterval(timer);
+                    } else {
+                        try { v.muted = true; } catch (e) {}
+                        speedUp(v);
+                        seekToEnd(v);
+                        clickSkip(v);
+                    }
+                }, 250);
                 setTimeout(function () {
                     if (v._kpDone === key && !v.ended) {
                         try { v.pause(); } catch (e) {}
                         fireEnded(v);
                     }
-                }, 1500);
+                }, 3000);
             }
         }
 
@@ -379,7 +443,7 @@
             SettingsUI.init();
             Watchdog.start();
 
-            console.log('[KP Keeper] v3.3.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
+            console.log('[KP Keeper] v3.5.0 инициализирован. Авторизован:', TokenStore.isAuthorized());
         }
     }
 
